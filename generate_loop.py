@@ -46,6 +46,37 @@ from utils.gl_utils import (
 )
 
 
+def run_harness_swe_gym(root_dir, output_dir, genid, skip_staged_eval=False, num_samples=-1):
+    """SWE-Gym domain evaluation per generation.
+
+    Mirrors run_harness_polyglot's contract but delegates to our Path-C adapter
+    which itself wraps mini-swe-agent's batch runner. See
+    domains/swe_gym/{harness,report}.py and the project plan §3.3 / §4.5.
+    """
+    from domains.swe_gym.harness import harness as harness_swe_gym
+    from domains.swe_gym.report import report as report_swe_gym
+
+    eval_output_dir = os.path.join(output_dir, f"gen_{genid}", "swe_gym_eval")
+    os.makedirs(eval_output_dir, exist_ok=True)
+    n = num_samples if (num_samples and num_samples > 0) else 50
+
+    pred_out = harness_swe_gym(
+        output_dir=eval_output_dir,
+        run_id=f"gen_{genid}",
+        subset="lite",
+        slice_spec=f"0:{n}",
+        num_workers=4,
+    )
+    summary = report_swe_gym(output_dir=pred_out, workers=2, only_submitted=True)
+    update_node_metadata(
+        output_dir, genid,
+        {"swe_gym_score": summary["score"],
+         "swe_gym_pass": summary["pass"],
+         "swe_gym_total_scored": summary["total_scored"],
+         "run_full_eval": True},
+    )
+
+
 def run_harness_polyglot(root_dir, output_dir, genid, skip_staged_eval=False, num_samples=-1):
     # NOTE: the harness for polyglot is different because each task instance needs a docker container
     from domains.polyglot.harness import harness as harness_polyglot
@@ -821,7 +852,7 @@ def generate_loop(
             archive = update_and_save_archive(output_dir, [], new_node=0)
             metadata = generate(
                 docker_client,
-                [d for d in domains if d != "polyglot"],
+                [d for d in domains if d not in ("polyglot", "swe_gym")],
                 output_dir,
                 run_id,
                 current_genid=0,
@@ -845,6 +876,9 @@ def generate_loop(
             # Evaluate the agent on polyglot if needed
             if "polyglot" in domains:
                 run_harness_polyglot(root_dir, output_dir, 0, skip_staged_eval=skip_staged_eval, num_samples=eval_samples[domains.index("polyglot")])
+            # Evaluate the agent on swe_gym if needed
+            if "swe_gym" in domains:
+                run_harness_swe_gym(root_dir, output_dir, 0, skip_staged_eval=skip_staged_eval, num_samples=eval_samples[domains.index("swe_gym")])
 
         # Evaluate the entire archive as an ensemble
         eval_ensemble = (
@@ -900,7 +934,7 @@ def generate_loop(
     for current_genid in range(start_genid, max_generation + 1):
         metadata = generate(
             docker_client,
-            [d for d in domains if d != "polyglot"],
+            [d for d in domains if d not in ("polyglot", "swe_gym")],
             output_dir,
             run_id,
             current_genid,
@@ -931,6 +965,9 @@ def generate_loop(
         # Evaluate the agent on polyglot if needed
         if "polyglot" in domains:
             run_harness_polyglot(root_dir, output_dir, current_genid, skip_staged_eval=skip_staged_eval, num_samples=eval_samples[domains.index("polyglot")])
+        # Evaluate the agent on swe_gym if needed
+        if "swe_gym" in domains:
+            run_harness_swe_gym(root_dir, output_dir, current_genid, skip_staged_eval=skip_staged_eval, num_samples=eval_samples[domains.index("swe_gym")])
 
         # Evaluate the entire archive as an ensemble
         eval_ensemble = (

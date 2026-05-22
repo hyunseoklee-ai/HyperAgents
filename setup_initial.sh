@@ -65,3 +65,12 @@ python -m domains.report --domain paper_review --dname ./outputs/initial_paper_r
 # python -m domains.polyglot.harness --subset small --output_dir ./outputs/initial_polyglot_0 --model_name_or_path eval_run
 # python -m domains.polyglot.report --output_dir ./outputs/initial_polyglot_0 --model_name_or_path eval_run
 
+
+# # swe_gym  (Path-C adapter; requires mini-swe-agent installed + vLLM serving Qwen3.5-4B on :8001)
+# # See domains/swe_gym/seed_harness/MANIFEST.md for seed identity.
+# python -m domains.swe_gym.harness --output_dir ./outputs/initial_swe_gym_train_0 --run_id initial_swe_gym_train_0 --subset lite --slice 0:50
+# python -m domains.swe_gym.report  --output_dir ./outputs/initial_swe_gym_train_0
+# # Held-out splits, optional:
+# # python -m domains.swe_gym.harness --output_dir ./outputs/initial_swe_gym_val_0   --run_id initial_swe_gym_val_0  --subset lite --slice 50:150
+# # python -m domains.swe_gym.harness --output_dir ./outputs/initial_swe_gym_test_0  --run_id initial_swe_gym_test_0 --subset lite --slice 150:230
+
