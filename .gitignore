@@ -9,6 +9,15 @@ traj.json
 .claude/**
 .vscode/**
 
+# meta-harness research artifacts (kept locally; too large or vendored)
+meta/training/checkpoints/
+meta/hyperagents_fork/
+meta/**/__pycache__/
+*.pyc
+*.safetensors
+*.pt
+*.bin
+
 # Created by https://www.toptal.com/developers/gitignore/api/python
 # Edit at https://www.toptal.com/developers/gitignore?templates=python
 
