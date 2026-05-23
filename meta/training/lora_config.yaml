@@ -25,7 +25,7 @@ lora:
     - down_proj
 
 training:
-  output_dir:                 "./meta/training/checkpoints/phase1_v0"
+  output_dir:                 "./meta/training/checkpoints/phase1_v1"
   num_train_epochs:           3                 # 17 trajs is small; allow several epochs
   per_device_train_batch_size: 1
   gradient_accumulation_steps: 8                # 17 / 8 ≈ 2 grad updates per epoch
@@ -47,13 +47,12 @@ training:
   # If 64K OOMs, accelerate launcher with deepspeed_z3_offload.yaml takes over.
 
 data:
-  # Phase 1: self-bootstrap from passing v1+v2 trajectories of mini-swe-agent + Qwen3.5-4B
+  # Phase 1 v3 (2026-05-23): self-bootstrap from Phase 0 v3 (Qwen3.5
+  # recommended sampling temp=0.6 etc., 16K obs cap, --language-model-only).
+  # 18 GOLDEN out of 42 Submitted = 42.9% pass — bigger pool than v1+v2 (17).
   trajectory_dirs:
-    - "/home/t-hyunlee/meta-harness-plan/results/phase0/0_50"
-    - "/home/t-hyunlee/meta-harness-plan/results/phase0/0_50_ctx128k"
+    - "/home/t-hyunlee/meta-harness-plan/results/phase0/v3_50_ctx128k"
   scores_paths:
-    - "/home/t-hyunlee/meta-harness-plan/results/phase0/0_50_scores.json"
-    - "/home/t-hyunlee/meta-harness-plan/results/phase0/0_50_ctx128k_scores.json"
-  # Future: Phase 2 also reads "proposer_pool.jsonl" with (parent, child, ΔScore) tuples
-  output_jsonl:                "./meta/training/data/phase1_generator.jsonl"
+    - "/home/t-hyunlee/meta-harness-plan/results/phase0/v3_50_scores.json"
+  output_jsonl:                "./meta/training/data/phase1_v3_generator.jsonl"
   drop_empty_assistant: true

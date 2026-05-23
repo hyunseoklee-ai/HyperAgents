@@ -22,7 +22,12 @@ GPU_MEM=0.85
 MODEL_ID="Qwen/Qwen3.5-35B-A3B-GPTQ-Int4"
 SERVED_NAME="qwen3.5-35b-a3b"
 QUANT="moe_wna16"
-REASONING_PARSER="qwen3"
+# Default OFF — match the 4B serving (serve_qwen35.sh has no reasoning-parser).
+# With the parser ON, vLLM strips <think>...</think> from `content` and exposes
+# it via a separate `reasoning_content` field; that asymmetry made 35B
+# trajectories look thinking-less compared to 4B. Use --reasoning-parser qwen3
+# explicitly if you want the separated reasoning_content payload.
+REASONING_PARSER=""
 LANG_ONLY=1
 SWAP_FROM=""
 KILL_ONLY=0
@@ -111,9 +116,11 @@ CMD=(python3.11 -m vllm.entrypoints.openai.api_server
      --gpu-memory-utilization "$GPU_MEM"
      --tensor-parallel-size 1
      --quantization "$QUANT"
-     --reasoning-parser "$REASONING_PARSER"
      --enable-prefix-caching
      --served-model-name "$SERVED_NAME")
+if [ -n "$REASONING_PARSER" ]; then
+  CMD+=(--reasoning-parser "$REASONING_PARSER")
+fi
 if [ "$LANG_ONLY" = "1" ]; then
   CMD+=(--language-model-only)
 fi

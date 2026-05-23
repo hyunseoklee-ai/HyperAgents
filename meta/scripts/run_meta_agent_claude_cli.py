@@ -236,11 +236,19 @@ def main():
     ap.add_argument("--gen", type=int, default=1)
     ap.add_argument("--model", default="sonnet",
                     help="Claude Code model alias: sonnet | haiku | opus")
-    ap.add_argument("--budget", type=float, default=3.0, help="--max-budget-usd")
-    ap.add_argument("--max-turns", type=int, default=20)
+    ap.add_argument("--budget", type=float, default=5.0,
+                    help="--max-budget-usd. Bumped from 3.0 → 5.0 on 2026-05-23 "
+                         "to match the 100-turn budget for Qwen proposers.")
+    ap.add_argument("--max-turns", type=int, default=100,
+                    help="Bumped from 20 → 100 on 2026-05-23 so Claude has "
+                         "comparable inspection budget to Qwen-4B / 35B.")
     ap.add_argument("--eval-samples", type=int, default=20)
     ap.add_argument("--no-eval", action="store_true")
-    ap.add_argument("--suffix", default="claude_cli")
+    ap.add_argument("--suffix", default="claude_cli",
+                    help="Trailing component of output dir: gen_{N}{output_suffix}_{suffix}")
+    ap.add_argument("--output-suffix", default="",
+                    help="Inserted between gen_{N} and the trailing _suffix. "
+                         "e.g. --output-suffix b → gen_1b_claude_cli/")
     args = ap.parse_args()
 
     env = read_env(ENV_FILE)
@@ -248,7 +256,7 @@ def main():
     if not token:
         print(f"[main] no ANTHROPIC_AUTH_TOKEN in {ENV_FILE}"); sys.exit(2)
 
-    gen_dir = PHASE_H_OUT / f"gen_{args.gen}_{args.suffix}"
+    gen_dir = PHASE_H_OUT / f"gen_{args.gen}{args.output_suffix}_{args.suffix}"
     gen_dir.mkdir(parents=True, exist_ok=True)
     candidate = gen_dir / "seed_harness"
     copy_seed(candidate)

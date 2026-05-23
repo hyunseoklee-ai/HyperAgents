@@ -26,13 +26,13 @@ from pathlib import Path
 ROOT = Path("/home/t-hyunlee/meta-harness-plan")
 VIEWER = ROOT / "viewer"
 
-PHASE0_V2_DIR  = ROOT / "results/phase0/0_50_ctx128k"
-PHASE0_V2_SCORES = ROOT / "results/phase0/0_50_ctx128k_scores.json"
+PHASE0_V2_DIR  = ROOT / "results/phase0/v3_50_ctx128k"
+PHASE0_V2_SCORES = ROOT / "results/phase0/v3_50_scores.json"
 
 PHASE_H_DIR = ROOT / "results/phase_h"
 
-PHASE_1_DIR = ROOT / "results/phase1/eval_0_50"
-PHASE_1_SCORES = ROOT / "results/phase1/eval_0_50_scores.json"
+PHASE_1_DIR = ROOT / "results/phase1/v3_eval_0_50"
+PHASE_1_SCORES = ROOT / "results/phase1/v3_eval_0_50_scores.json"
 
 
 # -------- shared CSS --------
@@ -137,7 +137,14 @@ FAILURE_PATTERNS = [
 ]
 _FAIL_RE = re.compile("|".join(FAILURE_PATTERNS), re.MULTILINE)
 
-THINKING_RE = re.compile(r"(<think>.*?</think>)", re.DOTALL)
+# Match thinking blocks, including the orphan-`</think>`-only form Qwen3.5-4B
+# emits when its chat template auto-prefixes `<think>\n` before generation:
+# the model's content starts mid-thought and only the closing tag survives.
+# We match the leading text up to the first </think> as the thinking block,
+# but only when that </think> appears within the first 8 KB of content to
+# avoid false positives on later occurrences (e.g. literal "</think>" inside
+# bash heredocs or YAML strings).
+THINKING_RE = re.compile(r"(<think>.*?</think>|^[^<]{0,8192}?</think>)", re.DOTALL)
 
 
 def extract_bash_blocks(text: str) -> list[tuple[str, str]]:
@@ -179,8 +186,14 @@ def render_message_body(text: str, role: str) -> str:
     out = []
     for kind, chunk in parts:
         if kind == "thinking":
-            # strip <think>...</think>
-            inner = chunk[len("<think>"):-len("</think>")] if chunk.startswith("<think>") else chunk
+            # strip <think>...</think> for the normal case, OR strip the trailing
+            # </think> for the orphan form (Qwen3.5-4B chat-template prefix case).
+            if chunk.startswith("<think>") and chunk.endswith("</think>"):
+                inner = chunk[len("<think>"):-len("</think>")]
+            elif chunk.endswith("</think>"):
+                inner = chunk[:-len("</think>")]
+            else:
+                inner = chunk
             out.append(
                 f'<details class="collapsible thinking">'
                 f'<summary>thinking ({len(inner)} chars)</summary>'
@@ -653,11 +666,54 @@ production scaffold (harness asymmetry — upper-bound only).</div>
   </div>
 </div>
 
-<h3>gen_1 candidates (one card per proposer)</h3>
+<h3>gen_1 — BUGGY scaffold regime (4 KB obs cap, worked-example data leakage, 20-turn budget)</h3>
+<div class="sub" style="font-size:13.5px;margin-bottom:6px">
+  Run 2026-05-22. Bugs discovered later: see <a href="/#sec-results-phaseh">dashboard §6.2</a>.
+  Both Qwen variants emitted bit-identical 422-byte copies of the worked-example edit; Claude
+  bypassed the 4 KB obs cap via Claude Code's native Read tool, so its edit was hypothesis-driven.
+</div>
 <div class="grid">
-  {_ph_gen1_card_qwen4b(stats)}
-  {_ph_gen1_card_claude_cli(stats)}
-  {_ph_gen1_card_qwen35b(stats)}
+  {_phase_h_card(stats, "phase_h_gen1",
+                 title="gen_1 A2 — Qwen3.5-4B (BUGGY)",
+                 proposer="Qwen3.5-4B",
+                 ablation="A2 (buggy regime)",
+                 scaffold="DGM ~200-LOC, 4K obs cap, 20 turn")}
+  {_phase_h_card(stats, "phase_h_gen1_qwen35b_buggy",
+                 title="gen_1 A2''' — Qwen3.5-35B-A3B-Int4 (BUGGY)",
+                 proposer="Qwen3.5-35B-A3B-GPTQ-Int4 — copied worked example",
+                 ablation="A2''' (buggy regime — proposer ablation)",
+                 scaffold="DGM ~200-LOC, 4K obs cap, 25 turn")}
+  {_phase_h_card(stats, "phase_h_gen1_claude_cli",
+                 title="gen_1 A2' — Sonnet 4.6 via Claude Code (partial bypass)",
+                 proposer="Sonnet 4.6 (Claude Code, $0.687, 22 turns)",
+                 ablation="A2' (Claude Code bypassed our buggy cap via native Read)",
+                 scaffold="Claude Code production scaffold")}
+</div>
+
+<h3>gen_1b — FIXED scaffold regime (16 KB obs cap, anti-copy worked examples, 100-turn budget)</h3>
+<div class="sub" style="font-size:13.5px;margin-bottom:6px">
+  Run 2026-05-23 after bug fixes (see <a href="/#sec-results-phaseh">dashboard</a> for fixes list).
+  All three proposers now produce <em>different</em> hypothesis-driven edits, confirming the
+  data-leakage and obs-cap bugs were the real cause of the Qwen variants' worked-example copying.
+  35B exhibits a <em>new</em> failure mode: it landed an edit then got stuck in a 91-turn
+  retry loop trying to fix a malformed character in the resulting diff.
+</div>
+<div class="grid">
+  {_phase_h_card(stats, "phase_h_gen1b",
+                 title="gen_1b A2_v1b — Qwen3.5-4B (FIXED)",
+                 proposer="Qwen3.5-4B — new hypothesis (verify-before-submit)",
+                 ablation="A2_v1b (fixed regime)",
+                 scaffold="DGM ~200-LOC, 16K obs cap, 100 turn")}
+  {_phase_h_card(stats, "phase_h_gen1b_qwen35b",
+                 title="gen_1b A2'''_v1b — Qwen3.5-35B-A3B-Int4 (FIXED — stuck-loop)",
+                 proposer="Qwen3.5-35B-A3B-GPTQ-Int4 — edit emitted then 91-turn stuck-loop",
+                 ablation="A2'''_v1b (fixed regime — new failure mode)",
+                 scaffold="DGM ~200-LOC, 16K obs cap, 100 turn")}
+  {_phase_h_card(stats, "phase_h_gen1b_claude_cli",
+                 title="gen_1b A2'_v1b — Sonnet 4.6 via Claude Code (FIXED)",
+                 proposer="Sonnet 4.6 — 5-step workflow rewrite + regression check (refines A2')",
+                 ablation="A2'_v1b (fixed regime)",
+                 scaffold="Claude Code production scaffold")}
 </div>
 
 <h2>Phase 0 v2 — baseline reference</h2>
@@ -756,6 +812,7 @@ def build():
     # conflate them. `result_dir_name` is the on-disk directory under
     # PHASE_H_DIR; `slug` is the viewer-side path component.
     PH_VARIANTS = [
+        # --- baseline ---
         {
             "result_dir_name": "gen_0",
             "slug": "phase_h_gen0",
@@ -763,30 +820,101 @@ def build():
             "short_label": "gen_0 baseline",
             "proposer": None,
             "outer_traj": False,
+            "regime": "baseline",
         },
+        # --- v3 redo (Qwen-only, 16K obs cap, anti-copy worked examples, ---
+        # --- 100 turns, Qwen3.5 recommended sampling, --language-model-only) --
         {
             "result_dir_name": "gen_1",
             "slug": "phase_h_gen1",
-            "label": "Phase H gen_1 — proposer = Qwen3.5-4B (A2)",
-            "short_label": "gen_1 (Qwen3.5-4B)",
-            "proposer": "Qwen3.5-4B (DGM 200-LOC scaffold)",
+            "label": "Phase H gen_1 v3 — Qwen3.5-4B proposer (A2)",
+            "short_label": "gen_1 v3 A2 (Qwen-4B)",
+            "proposer": "Qwen3.5-4B — 603-byte edit, 19 turns, submit (v3: anti-copy + 16K obs + 100 turn budget)",
             "outer_traj": True,
-        },
-        {
-            "result_dir_name": "gen_1_claude_cli",
-            "slug": "phase_h_gen1_claude_cli",
-            "label": "Phase H gen_1 — proposer = Claude Sonnet 4.6 via Claude Code (A2')",
-            "short_label": "gen_1 (Claude Sonnet via CLI)",
-            "proposer": "Claude Sonnet 4.6 (Claude Code harness, asymmetric upper-bound)",
-            "outer_traj": True,
+            "regime": "v3",
         },
         {
             "result_dir_name": "gen_1_qwen35b",
             "slug": "phase_h_gen1_qwen35b",
-            "label": "Phase H gen_1 — proposer = Qwen3.5-35B-A3B-Int4 (A2''')",
-            "short_label": "gen_1 (Qwen3.5-35B-A3B-Int4)",
-            "proposer": "Qwen3.5-35B-A3B-GPTQ-Int4 (matched-scaffold strong open-source)",
+            "label": "Phase H gen_1 v3 — Qwen3.5-35B-A3B-Int4 proposer (A2''')",
+            "short_label": "gen_1 v3 A2''' (Qwen-35B)",
+            "proposer": "Qwen3.5-35B-A3B-Int4 — 487-byte edit, 23 turns, submit (v3: + 24K max_tokens + tool_call fence regex)",
             "outer_traj": True,
+            "regime": "v3",
+        },
+        {
+            "result_dir_name": "gen_2",
+            "slug": "phase_h_gen2",
+            "label": "Phase H gen_2 v3 — Qwen3.5-4B chain (archive = gen_0 + gen_1)",
+            "short_label": "gen_2 v3 chain (Qwen-4B)",
+            "proposer": "Qwen3.5-4B with growing archive (gen_0 baseline + gen_1 A2 winner)",
+            "outer_traj": True,
+            "regime": "v3",
+        },
+        # --- Diagnostic entries: failure modes preserved for paper ablation ---
+        {
+            "result_dir_name": "gen_1_qwen35b_BUGGY",
+            "slug": "phase_h_gen1_qwen35b_buggy",
+            "label": "Phase H — diagnostic: worked-example leakage (35B BUGGY)",
+            "short_label": "diag: 35B copied example (v2 era)",
+            "proposer": "Qwen3.5-35B-A3B-Int4 — bit-identical 422-byte copy of worked-example text; pre-fix scaffold",
+            "outer_traj": True,
+            "regime": "diagnostic",
+        },
+        {
+            "result_dir_name": "gen_1_qwen35b_failed_8k_tokens",
+            "slug": "phase_h_gen1_qwen35b_failed_8k",
+            "label": "Phase H — diagnostic: max_tokens=8000 cutoff (A2''' v3 attempt 1)",
+            "short_label": "diag: 8K cutoff",
+            "proposer": "Qwen3.5-35B-A3B-Int4 — thinking-mode reasoning ate the budget; bash block emitted mid-cutoff at turn 6",
+            "outer_traj": True,
+            "regime": "diagnostic",
+        },
+        {
+            "result_dir_name": "gen_1_qwen35b_failed_tool_call_format",
+            "slug": "phase_h_gen1_qwen35b_failed_fence",
+            "label": "Phase H — diagnostic: <tool_call>bash fence mismatch (A2''' v3 attempt 2)",
+            "short_label": "diag: tool_call format",
+            "proposer": "Qwen3.5-35B-A3B-Int4 — emitted Qwen-hermes-style <tool_call>bash instead of ```bash; FENCE_RE didn't match",
+            "outer_traj": True,
+            "regime": "diagnostic",
+        },
+        {
+            "result_dir_name": "gen_1_claude_cli",
+            "slug": "phase_h_gen1_claude_cli",
+            "label": "Phase H gen_1 (BUGGY regime, but Claude bypassed via Read tool) — Sonnet 4.6 (A2')",
+            "short_label": "gen_1 A2' (Sonnet, partial bypass)",
+            "proposer": "Claude Sonnet 4.6 via Claude Code — bypassed our buggy scaffold's obs cap via native Read tool",
+            "outer_traj": True,
+            "regime": "buggy",
+        },
+        # --- gen_1b FIXED regime (16K obs cap, anti-copy worked examples, 100 turns) ---
+        {
+            "result_dir_name": "gen_1b",
+            "slug": "phase_h_gen1b",
+            "label": "Phase H gen_1b (FIXED) — Qwen3.5-4B (A2_v1b)",
+            "short_label": "gen_1b A2_v1b (4B, fixed regime)",
+            "proposer": "Qwen3.5-4B — different hypothesis from worked example (verify-before-submit)",
+            "outer_traj": True,
+            "regime": "fixed",
+        },
+        {
+            "result_dir_name": "gen_1b_qwen35b",
+            "slug": "phase_h_gen1b_qwen35b",
+            "label": "Phase H gen_1b (FIXED) — Qwen3.5-35B-A3B-Int4 (A2'''_v1b)",
+            "short_label": "gen_1b A2'''_v1b (35B, fixed regime — stuck-loop)",
+            "proposer": "Qwen3.5-35B-A3B-GPTQ-Int4 — different from worked example, but emitted broken edit then got stuck in 91-turn loop trying to fix it",
+            "outer_traj": True,
+            "regime": "fixed",
+        },
+        {
+            "result_dir_name": "gen_1b_claude_cli",
+            "slug": "phase_h_gen1b_claude_cli",
+            "label": "Phase H gen_1b (FIXED) — Sonnet 4.6 (A2'_v1b)",
+            "short_label": "gen_1b A2'_v1b (Sonnet, fixed regime)",
+            "proposer": "Claude Sonnet 4.6 via Claude Code — 5-step workflow rewrite + regression check (refines on A2')",
+            "outer_traj": True,
+            "regime": "fixed",
         },
     ]
 
@@ -801,7 +929,10 @@ def build():
         # trajectory or a meta-agent trajectory. An empty result dir (e.g.
         # pre-created for snapshot capture) does NOT count.
         has_inner = eval_dir.exists() and any(eval_dir.iterdir())
-        has_outer = (gen_dir / "meta_trajectory.json").exists()
+        has_outer = (
+            (gen_dir / "meta_trajectory.json").exists()
+            or (gen_dir / "claude_cli_result.json").exists()
+        )
         if not (has_inner or has_outer):
             stats[f"{slug}_total"] = 0
             stats[f"{slug}_pass"] = 0

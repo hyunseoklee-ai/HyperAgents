@@ -16,21 +16,23 @@
 set -euo pipefail
 
 REPO=/home/t-hyunlee/mini-swe-agent
-OUT=/home/t-hyunlee/meta-harness-plan/results/phase_h/gen_1_qwen35b
 LOGDIR=/home/t-hyunlee/meta-harness-plan/logs
 SCRIPTS=$REPO/meta/scripts
 TS=$(date +%Y%m%d_%H%M%S)
 
 PROPOSE=1
 EVAL=1
+OUTPUT_SUFFIX=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --propose-only) EVAL=0; shift ;;
-    --eval-only)    PROPOSE=0; shift ;;
-    -h|--help)      sed -n '2,16p' "$0"; exit 0 ;;
+    --propose-only)  EVAL=0; shift ;;
+    --eval-only)     PROPOSE=0; shift ;;
+    --output-suffix) OUTPUT_SUFFIX="$2"; shift 2 ;;
+    -h|--help)       sed -n '2,16p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
+OUT=/home/t-hyunlee/meta-harness-plan/results/phase_h/gen_1${OUTPUT_SUFFIX}_qwen35b
 
 mkdir -p "$OUT" "$LOGDIR"
 
@@ -55,7 +57,8 @@ if [ "$PROPOSE" = "1" ]; then
   echo
   echo "--- Step 3: run meta-agent v3 (proposer = Qwen3.5-35B-A3B-Int4)"
   cd "$REPO"
-  if python3.11 -m meta.scripts.run_meta_agent_v3_qwen35b --gen 1 --no-eval \
+  if python3.11 -m meta.scripts.run_meta_agent_v3_qwen35b \
+       --gen 1 --output-suffix "$OUTPUT_SUFFIX" --no-eval \
        > "$LOGDIR/meta_agent_v3_${TS}.log" 2>&1; then
     echo "meta-agent v3 done. diff:"
     ls -la "$OUT"/diff.patch 2>/dev/null || echo "(no diff.patch)"

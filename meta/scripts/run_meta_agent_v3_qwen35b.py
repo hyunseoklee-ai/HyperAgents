@@ -53,15 +53,25 @@ def main() -> int:
                     help="OpenAI-compatible endpoint for the 35B proposer")
     ap.add_argument("--model", default="qwen3.5-35b-a3b",
                     help="Served model name on the proposer vLLM")
-    ap.add_argument("--max-steps", type=int, default=25,
-                    help="Reasoning model often needs ~25 turns vs Qwen-4B's 20")
-    ap.add_argument("--max-tokens", type=int, default=8000,
-                    help="Generous budget to allow <think> + bash fence")
+    ap.add_argument("--max-steps", type=int, default=100,
+                    help="Reasoning model needs more turns than Qwen-4B; the 100 "
+                         "default (was 25 before 2026-05-23) matches the new v2.py "
+                         "default and the Claude CLI --max-turns 100.")
+    ap.add_argument("--max-tokens", type=int, default=24000,
+                    help="Generous per-turn budget. 8000 (pre-2026-05-23) cut "
+                         "the 35B-A3B's bash fence mid-emission on the first "
+                         "v3 attempt — the model spent the budget on <think> "
+                         "reasoning and ran out before completing the bash "
+                         "block. 24000 leaves ample room for both the "
+                         "reasoning trace and the final command.")
     ap.add_argument("--no-eval", action="store_true",
                     help="Only propose; skip the 20-task inner eval")
+    ap.add_argument("--output-suffix", default="",
+                    help="Appended to gen_{N} before '_qwen35b'. e.g. 'b' → "
+                         "gen_1b_qwen35b/")
     args = ap.parse_args()
 
-    out_dir = PHASE_H_OUT / f"gen_{args.gen}_qwen35b"
+    out_dir = PHASE_H_OUT / f"gen_{args.gen}{args.output_suffix}_qwen35b"
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "proposer_info.txt").write_text(
         f"model: {args.model}\nendpoint: {args.endpoint}\n"

@@ -90,9 +90,21 @@ def main():
         # Override step + cost limits for cheap Phase 0; vLLM cost is irrelevant
         "-c", "agent.cost_limit=0",
         "-c", "agent.step_limit=120",
-        "-c", "model.model_kwargs.temperature=0.0",
         "-c", "model.cost_tracking=ignore_errors",
         "-c", "model.model_kwargs.max_tokens=4096",
+        # Qwen3.5 model-card recommended sampling for "Thinking mode, PRECISE
+        # CODING tasks" — the inner agent is a precise-coding agent
+        # (edit source files to pass benchmark tests). This is the per-task
+        # recommendation that differs from the outer meta-agent's
+        # "Thinking mode, general tasks" preset (in run_meta_agent_v2.py).
+        #   temperature=0.6, top_p=0.95, top_k=20, min_p=0.0,
+        #   presence_penalty=0.0, repetition_penalty=1.0
+        # top_k / min_p / repetition_penalty go via extra_body (vLLM-specific;
+        # LiteLLM forwards them transparently for hosted_vllm provider).
+        "-c", "model.model_kwargs.temperature=0.6",
+        "-c", "model.model_kwargs.top_p=0.95",
+        "-c", "model.model_kwargs.presence_penalty=0.0",
+        "-c", 'model.model_kwargs.extra_body={"top_k":20,"min_p":0.0,"repetition_penalty":1.0}',
         *extra,
     ]
     sb_module.app()

@@ -186,8 +186,14 @@ client = OpenAI(base_url=os.environ['META_ENDPOINT'], api_key='dummy')
 MODEL = os.environ['META_MODEL']
 MAX_STEPS = int(os.environ.get('META_MAX_STEPS','20'))
 
-# strict bash/sh fence — does NOT match `mswea_bash_command`
-FENCE_RE = re.compile(r'```(?:bash|sh)\s*\n(.*?)```', re.DOTALL)
+# strict bash/sh fence — does NOT match `mswea_bash_command`.
+# Also matches Qwen-hermes-style `<tool_call>bash\n...</tool_call>` and the
+# mixed form `<tool_call>bash\n...```` that the 35B-A3B emitted on
+# 2026-05-23 (high-temp thinking-general sampling drifted the format).
+FENCE_RE = re.compile(
+    r'(?:```|<tool_call>\s*)(?:bash|sh)\s*\n(.*?)(?:```|</tool_call>)',
+    re.DOTALL,
+)
 SUBMIT_RE = re.compile(r'(?ms)^(?:\s*echo\s+COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\s*(?:&&|;|$).*)+$')
 
 with open('/system_prompt.txt') as f:    SYS = f.read()
@@ -209,13 +215,41 @@ def log_msg(label, text):
 stopped_by = 'budget'
 for step in range(MAX_STEPS):
     try:
+        # Sampling parameters. Defaults match Qwen3.5's official "Best Practices"
+        # for THINKING-MODE GENERAL tasks (HF model card for Qwen/Qwen3.5-4B and
+        # Qwen/Qwen3.5-35B-A3B-GPTQ-Int4):
+        #   temperature=1.0  top_p=0.95  top_k=20  min_p=0  presence_penalty=1.5
+        # The presence_penalty=1.5 is explicitly recommended for stuck-loop
+        # avoidance (the 91-turn repeat we observed in the 35B's first 2026-05-23
+        # run). All env-overridable so future ablations can flip to Qwen's
+        # "Precise coding" preset (temp=0.6, presence_penalty=0.0) etc.
         r = client.chat.completions.create(
-            model=MODEL, messages=messages, temperature=0.3, max_tokens=MAX_TOKENS)
+            model=MODEL, messages=messages,
+            temperature      = float(os.environ.get('META_TEMPERATURE', '1.0')),
+            top_p            = float(os.environ.get('META_TOP_P', '0.95')),
+            presence_penalty = float(os.environ.get('META_PRESENCE_PENALTY', '1.5')),
+            max_tokens       = MAX_TOKENS,
+            extra_body={
+                'top_k': int(  os.environ.get('META_TOP_K', '20')),
+                'min_p': float(os.environ.get('META_MIN_P', '0')),
+            },
+        )
     except Exception as e:
         print(f'[meta] API error step {step}: {repr(e)[:300]}')
         stopped_by = 'api_error'
         break
     content = r.choices[0].message.content or ''
+    # vLLM's reasoning-parser (e.g. --reasoning-parser qwen3) strips <think>...</think>
+    # off the content field and exposes it as a separate `reasoning_content` field.
+    # Recover it so the trajectory + viewer can show the model's reasoning.
+    reasoning = ''
+    try:
+        extra = getattr(r.choices[0].message, 'model_extra', None) or {}
+        reasoning = extra.get('reasoning_content', '') or ''
+    except Exception:
+        pass
+    if reasoning:
+        content = f'<think>\n{reasoning.strip()}\n</think>\n\n{content}'
     log_msg(f'asst#{step}', content)
     messages.append({'role':'assistant','content':content})
     trajectory.append({'role':'assistant','content':content})
@@ -261,7 +295,11 @@ for step in range(MAX_STEPS):
     try:
         out = subprocess.run(['bash','-c',cmd], cwd='/workspace',
                              capture_output=True, text=True, timeout=120)
-        obs = (out.stdout + out.stderr)[:4000]
+        # Observation cap (system limit). 16 KB was 4 KB before 2026-05-23 — the
+        # smaller cap silently truncated `cat`/`tail -c 8000` of large trajectory
+        # files (~400 KB), which led the meta-agent to (correctly) infer
+        # "data is truncated" without realizing the truncation was on our side.
+        obs = (out.stdout + out.stderr)[:16000]
         ret = out.returncode
     except subprocess.TimeoutExpired:
         obs = '(bash command timed out after 120s)'
@@ -372,6 +410,15 @@ def run_meta_agent_in_docker(candidate_dir: Path, archive_dir: Path,
         7. `git -C /workspace diff prompts.yaml`       — verify the patch
         8. exit (see hard-rules above)
 
+        # System limit — observation cap
+
+        The output of any shell command you run is truncated to about
+        **16 KB** before it is shown back to you. A single trajectory file
+        is ~300-500 KB, so you cannot dump the whole thing in one go. Read
+        WITHIN this limit — slice with byte/line ranges, key extraction, or
+        whatever Python/jq pattern is appropriate. Plan reads so each one
+        fits, instead of expecting full files.
+
         # ✅ EDIT TOOL — use `edit-prompt` only
 
         We have installed a dedicated helper command. **Use it for all edits.**
@@ -395,14 +442,20 @@ def run_meta_agent_in_docker(candidate_dir: Path, archive_dir: Path,
           VALUE  = literal text. For `replace_substring`, write it as
                    `"OLD|||NEW"` (substring to find, then `|||`, then replacement).
 
-        # Worked examples (you may copy then adapt)
+        # Worked examples — SYNTAX ONLY, do not copy the content
 
-        Append one rule to the system prompt:
+        ⚠ The two example edits below are for showing helper syntax only.
+        They are NOT the answer. Do NOT submit one of these literal edits.
+        Your hypothesis must be grounded in the specific failure modes you
+        observed when reading the archive, and the edit must reflect that
+        hypothesis — not match the example string above.
+
+        Append one rule to the system prompt (example syntax):
         ```bash
         edit-prompt agent.system_template append "Submit as soon as your test reproducer passes; do not run additional verification commands."
         ```
 
-        Substitute inside instance_template (e.g. tighten the workflow):
+        Substitute inside instance_template (example syntax):
         ```bash
         edit-prompt agent.instance_template replace_substring "3. Edit the source code to resolve the issue|||3. Edit the smallest necessary source change to resolve the issue, avoiding edits to unrelated functions"
         ```
@@ -608,12 +661,21 @@ def main():
     ap.add_argument("--eval-samples", type=int, default=20)
     ap.add_argument("--endpoint", default="http://localhost:8001/v1")
     ap.add_argument("--model",    default="qwen3.5-4b")
-    ap.add_argument("--max-steps", type=int, default=20)
+    ap.add_argument("--max-steps", type=int, default=100,
+                    help="Outer-loop turn budget (was 20 pre-2026-05-23 — too small).")
+    ap.add_argument("--self-critique", action="store_true",
+                    help="(Reserved) when set, append a self-critique step to the "
+                         "system prompt. Default off — pure proposing. Currently a "
+                         "no-op flag; behavior to be wired in.")
     ap.add_argument("--no-eval", action="store_true",
                     help="only run the meta-agent and capture the diff; skip eval")
+    ap.add_argument("--output-suffix", default="",
+                    help="String appended to gen_{N} dir name. e.g. 'b' "
+                         "produces 'gen_1b/' instead of 'gen_1/'. Used to keep "
+                         "pre-fix and post-fix runs side-by-side without clobbering.")
     args = ap.parse_args()
 
-    gen_dir = PHASE_H_OUT / f"gen_{args.gen}"
+    gen_dir = PHASE_H_OUT / f"gen_{args.gen}{args.output_suffix}"
     gen_dir.mkdir(parents=True, exist_ok=True)
     candidate = gen_dir / "seed_harness"
     copy_seed(candidate)
